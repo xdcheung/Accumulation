@@ -1,0 +1,189 @@
+CXF是支持对附件上传的协议MTOM。
+MTOM（SOAP Message Transmission Optimization Mechanism）SOAP 消息传输优化机制，可以在SOAP 消息中发送二进制数据，与SAAJ 传输附件不同，MTOM需要XOP（XML-binary Optimized Packing）来传输二进制数据。MTOM 允许将消息中包含的大型数据元素外部化，并将其作为无任何特殊编码的二进制数据随消息一起传送。MTOM 消息会打包为多部分相关 MIME 序列，放在SOAP 消息中一起传送。因此你可以看出MTOM 并不是将附件转为Base64 编码，这样可以大大的提高性能，因为二进制文件转Base64 编码会非常庞大。
+ 
+ 
+MTOM 方式中要传输的附件必须使用javax.activation.DataHandler 类，然后对象类型还要使用@javax.xml.binding.annotation.XmlMimeType 进行注解，标注这是一个附件类型的数据。
+ 
+这里拿上传及下载用户的图像为例子，大致的说下CXF的MTOM协议对附件的支持
+ 
+1、POJO对象类的处理
+ 
+ 
+
+@XmlRootElement(name="User")  
+@XmlAccessorType(XmlAccessType.FIELD)  
+@XmlType(name="User")  
+public class User {  
+      
+    @XmlElement(nillable=true)  
+    private Long id;  
+      
+    @XmlElement(nillable=true)  
+    private String name;  
+      
+    @XmlElement(nillable=true)  
+    private int age;  
+  
+    @XmlMimeType("application/octet-stream")  
+    private DataHandler imageData;  //人员的图像  
+      
+    public User() {}  
+      
+    public User(Long id, String name, int age) {  
+        super();  
+        this.id = id;  
+        this.name = name;  
+        this.age = age;  
+    }  
+  
+    public Long getId() {  
+        return id;  
+    }  
+  
+    public void setId(Long id) {  
+        this.id = id;  
+    }  
+  
+    public String getName() {  
+        return name;  
+    }  
+  
+    public void setName(String name) {  
+        this.name = name;  
+    }  
+  
+    public int getAge() {  
+        return age;  
+    }  
+  
+    public void setAge(int age) {  
+        this.age = age;  
+    }  
+  
+    public DataHandler getImageData() {  
+        return imageData;  
+    }  
+  
+    public void setImageData(DataHandler imageData) {  
+        this.imageData = imageData;  
+    }  
+      
+}  
+ 
+  注意：图像的类型必须为DataHandle类型。这里标注imageData 是一个二进制文件（application/octet-stream），当然你也可以使用具体的MIME类型，譬如：image/jpg、image/gif 等，但你要考虑客户端是否有对应的类型（因为JAVA语言之外的客户端的特性未必是你完全了解的），而且javax.activation.*中的MIME 的相关API 可以完成MIME 类型的自动识别。这里你要注意的是必须在类上使用@XmlAccessorType(FIELD)注解，标注JAXB 在进行JAVA 对象与XML 之间进行转换时只关注字段，而不关注属性（getXXX()方法），否则发布Web 服务时会报出现了两个imageData 属性的错误
+ 
+2、让你要在服务端和客户端分别启用MTOM 支持。可以与spring整合后，可以修改CXF的spring配置文件，来启用MTOM
+  t添加代码如下：   
+ 
+ 
+Java代码  收藏代码
+<jaxws:properties>  
+    <entry key="mtom-enabled" value="true" />  
+  </jaxws:properties>  
+ 
+ 
+ 
+这段内容加到<jaxws:server … 、<jaxws:endpoint … 、<jaxws:client … 之间即可，例如：
+ 
+ 
+ 
+Java代码  收藏代码
+<jaxws:endpoint id="helloWorld" implementor="#HelloWorldImpl" address="/HelloWorld" >  
+    <!-- 输入日志拦截器 -->  
+   <jaxws:inInterceptors>  
+        <ref bean="inMessageInterceptor"/>  
+   </jaxws:inInterceptors>  
+   <!-- 输出日志拦截器 -->  
+   <jaxws:outInterceptors>  
+      <ref bean="outMessageInterceptor"/>  
+   </jaxws:outInterceptors>  
+   <jaxws:properties>  
+      <entry key="mtom_enabled" value="true"></entry>  
+   </jaxws:properties>  
+</jaxws:endpoint>  
+ 
+ 
+ 
+ 
+也可以使用Java Code 实现启用MTOM
+ 
+3、具体实现
+   （1）HelloWorld.java接口添加如下两个方法
+ 
+ 
+Java代码  收藏代码
+@WebMethod  
+    public User getUser();  
+      
+    @WebMethod  
+    public void updateUser(@WebParam(name="user")User user);  
+ 
+ 
+ 
+（2）HellWorld.java实现接口添加的两个方法
+ 
+ 
+Java代码  收藏代码
+/** 
+ * <修改用户信息，包括上传用户的图像 
+ * 创 建 人:  XX 
+ * 创建时间:  2012-9-26 下午04:50:23   
+ * @param user 
+ * @see [类、类#方法、类#成员] 
+ */  
+public void updateUser(User user){  
+    System.out.println("姓名："+user.getName()+"，年龄："+user.getAge());  
+    DataHandler handler = user.getImageData();  
+    try {  
+        InputStream is = handler.getInputStream();  
+        OutputStream os = new FileOutputStream(new File("c:\\test11.jpg"));  
+        byte[] b = new byte[100000];  
+        int bytesRead = 0;  
+        while ((bytesRead = is.read(b)) != -1) {  
+            os.write(b, 0, bytesRead);  
+        }  
+        os.flush();  
+        os.close();  
+        is.close();  
+    } catch (IOException e) {  
+        e.printStackTrace();  
+    }  
+}  
+  
+/** 
+ * 查询用户信息，包括以附件的形式返回用户的图像 
+ * 创 建 人:  XX 
+ * 创建时间:  2012-9-26 下午04:49:43   
+ * @return 
+ * @see [类、类#方法、类#成员] 
+ */  
+public User getUser(){  
+    User user =new User(11L,"李四",21);  
+    user.setImageData(new DataHandler(new FileDataSource(new File("d:"+File.separator)+"test.jpg")));  
+    return user;  
+}  
+ 
+ 
+ 
+4、测试
+ 
+ 
+Java代码  收藏代码
+    User user =client.getUser();  
+  
+   //修改用户信息，包括上传图像  
+user =new User(12L,"王五",23);  
+DataSource source = new FileDataSource(new File("d:"+File.separator+"test.jpg"));  
+user.setImageData(new DataHandler(source));  
+client.updateUser(user);  
+  
+//查询用户信息  
+InputStream is = user.getImageData().getDataSource().getInputStream();  
+OutputStream os = new FileOutputStream(new File("d:"+File.separator+"test11.jpg"));  
+byte[] b = new byte[100000];  
+int bytesRead = 0;  
+while ((bytesRead = is.read(b)) != -1) {  
+    os.write(b, 0, bytesRead);  
+}  
+os.close();  
+is.close();  
